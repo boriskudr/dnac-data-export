@@ -13,8 +13,8 @@ import urllib3
 urllib3.disable_warnings()
 
 from ratelimit import limits, sleep_and_retry
-api_rate_limit = 30        # Calls
-api_rate_limit_period = 60 # Seconds
+api_rate_limit = 999           # Calls
+api_rate_limit_period = 60*100 # Seconds
 
 class TokenManager:
     def __init__(self, token_url, client_id, client_secret):
@@ -27,9 +27,10 @@ class TokenManager:
 
     def request_token(self):
         try:
+            check_api_rate_limit()
             response = requests.post(self.token_url, auth=HTTPBasicAuth(username, password), verify=False)
             self.token = response.json()['Token']
-            logging.info(f"Token received at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            logging.info(f"Token received from DNAC")
             return self.token
         except requests.exceptions.RequestException as e:
             logging.error(f"Failed to request token: {e}")
@@ -106,13 +107,14 @@ def get_headers():
     return headers
 
 def get_devices(base_url):
-    check_api_rate_limit()
+
     
     devices_url = '/dna/intent/api/v1/network-device'
 
     params = {}
 
     headers = get_headers()
+    check_api_rate_limit()
     response = requests.get(base_url + devices_url, headers=headers, params=params, verify=False)
     devices = []
     # Save the entire device data as a list of dictionaries
@@ -124,7 +126,6 @@ def get_devices(base_url):
     return devices
 
 def get_user_port_config(base_url, management_ip_address, interface_name):
-    check_api_rate_limit()
     
     sda_port_assignment_url = '/dna/intent/api/v1/business/sda/hostonboarding/user-device'
 
@@ -136,6 +137,7 @@ def get_user_port_config(base_url, management_ip_address, interface_name):
     logging.info(f"Retrieving data for switch {management_ip_address} {interface_name}")
     
     headers = get_headers()
+    check_api_rate_limit()
     response = requests.get(base_url + sda_port_assignment_url, headers=headers, params=port_info, verify=False)
     data = response.json()
 	
@@ -165,7 +167,6 @@ def get_user_port_config(base_url, management_ip_address, interface_name):
             critical_api_error(management_ip_address, interface_name, response)
 
 def get_wap_port_config(base_url, management_ip_address, interface_name):
-    check_api_rate_limit()
     
     sda_wap_port_assignment_url = '/dna/intent/api/v1/business/sda/hostonboarding/access-point'
 
@@ -177,6 +178,7 @@ def get_wap_port_config(base_url, management_ip_address, interface_name):
     logging.info(f"Retrieving data for switch {management_ip_address} {interface_name} (WAP)")
     
     headers = get_headers()
+    check_api_rate_limit()
     response = requests.get(base_url + sda_wap_port_assignment_url, headers=headers, params=port_info, verify=False)
     data = response.json()
     
@@ -206,8 +208,9 @@ def get_switch_ports_data(base_url, device):
     """
     port_info_list = []
     platform_id = device['platformId'].split(",")
-    for entry_id, platform in enumerate(platform_id):
+    for switch_stack_member_id, platform in enumerate(platform_id):
         # Construct interface name pattern based on platform ID
+        # Assuming that switch stack members are numbered consequently from 1
         platform_parts = platform.split("-")  # Split platform ID by dash
         platform_ports = platform_parts[1] # Take second part of platform
         match = re.search(r"(\d+)(.*)", platform_ports) # Match first digits in the ports part of the platform
@@ -220,7 +223,8 @@ def get_switch_ports_data(base_url, device):
         
         # Loop through port range and call get_port_config for each port
         for port_number in range(1, end_port + 1):
-            interface_name = f"GigabitEthernet{entry_id+1}/0/{port_number}"
+            # Assuming that all switch ports are Gigabit Ethernet
+            interface_name = f"GigabitEthernet{switch_stack_member_id+1}/0/{port_number}"
             logging.debug(f"Engaging function get_port_config with parameters {base_url}, {device['managementIpAddress']}, {interface_name}\n")
             port_data = get_user_port_config(base_url, device['managementIpAddress'], interface_name)
             # Checking if switch is not provisioned to site - will get port_data = None from function
