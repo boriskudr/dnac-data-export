@@ -1,3 +1,4 @@
+import threading
 import argparse
 import json
 import logging
@@ -5,7 +6,7 @@ import re
 from openpyxl import Workbook
 import os, sys
 from argparse import ArgumentParser
-import datetime
+import time
 import requests
 from requests.auth import HTTPBasicAuth
 import urllib3
@@ -14,6 +15,38 @@ urllib3.disable_warnings()
 from ratelimit import limits, sleep_and_retry
 api_rate_limit = 30        # Calls
 api_rate_limit_period = 60 # Seconds
+
+class TokenManager:
+    def __init__(self, token_url, client_id, client_secret):
+        self.token_url = token_url
+        self.username = client_id
+        self.password = client_secret
+        self.token = None
+        self.token_expiry = 3600  # Token is valid for 1 hour
+        self.token_refresh_time = 3000  # Refresh token 10 minutes before expiry
+
+    def request_token(self):
+        try:
+            response = requests.post(self.token_url, auth=HTTPBasicAuth(username, password), verify=False)
+            self.token = response.json()['Token']
+            logging.info(f"Token received at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            return self.token
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Failed to request token: {e}")
+
+    def refresh_token(self):
+        while True:
+            time.sleep(self.token_refresh_time)
+            self.request_token()
+
+    def get_token(self):
+        return self.token
+
+    def start(self):
+        self.request_token()
+        refresh_thread = threading.Thread(target=self.refresh_token)
+        refresh_thread.daemon = True
+        refresh_thread.start()
 
 @sleep_and_retry
 @limits(calls=api_rate_limit, period=api_rate_limit_period)
@@ -61,15 +94,9 @@ def set_variables_from_env_and_cli():
 
     return username, password, device_name_filter_string
     
-def get_headers(username, password, base_url):
-    check_api_rate_limit()
+def get_headers():
     
-    auth_url = '/dna/system/api/v1/auth/token'
-
-    response = requests.post(base_url + auth_url, auth=HTTPBasicAuth(username, password), verify=False)
-    token = response.json()['Token']
-    if token:
-        logging.info(f"API token retrieved from DNAC {base_url}")
+    token = token_manager.get_token()
 
     headers = {
         'X-Auth-Token': token,
@@ -78,25 +105,25 @@ def get_headers(username, password, base_url):
 
     return headers
 
-def get_devices(base_url, headers):
+def get_devices(base_url):
     check_api_rate_limit()
     
     devices_url = '/dna/intent/api/v1/network-device'
 
-    #params = {"managementIpAddress" : "172.19.105.21"}
     params = {}
 
+    headers = get_headers()
     response = requests.get(base_url + devices_url, headers=headers, params=params, verify=False)
     devices = []
+    # Save the entire device data as a list of dictionaries
     for item in response.json()['response']:
-        # Save the entire device data as a list
         devices.append(item)
 
     logging.info(f"Devices data retrieved from DNAC {base_url}")
 
     return devices
 
-def get_user_port_config(base_url, headers, management_ip_address, interface_name):
+def get_user_port_config(base_url, management_ip_address, interface_name):
     check_api_rate_limit()
     
     sda_port_assignment_url = '/dna/intent/api/v1/business/sda/hostonboarding/user-device'
@@ -108,6 +135,7 @@ def get_user_port_config(base_url, headers, management_ip_address, interface_nam
 
     logging.info(f"Retrieving data for switch {management_ip_address} {interface_name}")
     
+    headers = get_headers()
     response = requests.get(base_url + sda_port_assignment_url, headers=headers, params=port_info, verify=False)
     data = response.json()
 	
@@ -130,13 +158,13 @@ def get_user_port_config(base_url, headers, management_ip_address, interface_nam
             if "This interface is not assigned to user device" in data['description']:
                 # Need to call another function because this port is connected to WAP
                 logging.debug(f"Engaging get_wap_port_config function for {interface_name}\n")
-                return get_wap_port_config(base_url, headers, management_ip_address, interface_name)
+                return get_wap_port_config(base_url, management_ip_address, interface_name)
             else:
                 critical_api_error(management_ip_address, interface_name, response)
         except KeyError: # Handle API response without "description"
             critical_api_error(management_ip_address, interface_name, response)
 
-def get_wap_port_config(base_url, headers, management_ip_address, interface_name):
+def get_wap_port_config(base_url, management_ip_address, interface_name):
     check_api_rate_limit()
     
     sda_wap_port_assignment_url = '/dna/intent/api/v1/business/sda/hostonboarding/access-point'
@@ -148,6 +176,7 @@ def get_wap_port_config(base_url, headers, management_ip_address, interface_name
 
     logging.info(f"Retrieving data for switch {management_ip_address} {interface_name} (WAP)")
     
+    headers = get_headers()
     response = requests.get(base_url + sda_wap_port_assignment_url, headers=headers, params=port_info, verify=False)
     data = response.json()
     
@@ -156,27 +185,25 @@ def get_wap_port_config(base_url, headers, management_ip_address, interface_name
         del data['status']
         del data['description']
         del data['executionId']
-        # Adding this key for compatibility with user ports data
+        # Adding this key for compatibility with user ports data format
         data['voiceIpAddressPoolName'] = "" 
         return data
     else:
         logging.debug(f"{data}\n")
         critical_api_error(management_ip_address, interface_name, response)
         
-def get_switch_ports_data(base_url, device, headers):
+def get_switch_ports_data(base_url, device):
     """
     Retrieves access port information for a switch in the provided data.
 
     Args:
         device (dict) : Dictionary containing one switch data from DNA Center.
         base_url (str): Base URL of DNA Center.
-        headers (dict): Authentication headers for DNA Center API requests.
         managementIpAddress (str): IP address of a switch
 
     Returns:
         list: List of dictionaries containing retrieved port information.
     """
-
     port_info_list = []
     platform_id = device['platformId'].split(",")
     for entry_id, platform in enumerate(platform_id):
@@ -194,8 +221,8 @@ def get_switch_ports_data(base_url, device, headers):
         # Loop through port range and call get_port_config for each port
         for port_number in range(1, end_port + 1):
             interface_name = f"GigabitEthernet{entry_id+1}/0/{port_number}"
-            logging.debug(f"Engaging function get_port_config with parameters {base_url}, {headers}, {device['managementIpAddress']}, {interface_name}\n")
-            port_data = get_user_port_config(base_url, headers, device['managementIpAddress'], interface_name)
+            logging.debug(f"Engaging function get_port_config with parameters {base_url}, {device['managementIpAddress']}, {interface_name}\n")
+            port_data = get_user_port_config(base_url, device['managementIpAddress'], interface_name)
             # Checking if switch is not provisioned to site - will get port_data = None from function
             if port_data:
                 if port_data != "Unassigned":
@@ -207,14 +234,13 @@ def get_switch_ports_data(base_url, device, headers):
 
     return port_info_list
 
-def get_and_write_all_switches_ports_data_to_workbook(base_url, switches_data, device_name_filter_string, headers, workbook):
+def get_and_write_all_switches_ports_data_to_workbook(base_url, switches_data, device_name_filter_string, workbook):
     """
     Retrieves access port information for switches in the provided data and adds each switch's port info into a separate sheet in workbook.
 
     Args:
         switches_data (dict): Dictionary containing all switches data from DNA Center.
         base_url (str): Base URL of DNA Center.
-        headers (dict): Authentication headers for DNA Center API requests.
         workbook (workbook): workbook object
 
     Returns:
@@ -228,11 +254,11 @@ def get_and_write_all_switches_ports_data_to_workbook(base_url, switches_data, d
             
             device_hostname_short = device['hostname'].split(".")[0]
             
-            logging.debug(f"Engaging function get_switch_ports_data with parameters {base_url}, {device}, {headers}\n")
+            logging.debug(f"Engaging function get_switch_ports_data with parameters {base_url}, {device}\n")
             
             logging.info(f"Retrieving ports data from access switch {device_hostname_short}")
             
-            ports_data = get_switch_ports_data(base_url, device, headers)
+            ports_data = get_switch_ports_data(base_url, device)
             
             logging.debug(f"Retieved ports data: {ports_data}\n")
 
@@ -246,15 +272,15 @@ def write_data_to_sheet_in_workbook(data, sheet_name, workbook):
   
     sheet = workbook.create_sheet(title=sheet_name)
 
-    # Write headers
-    headers = list(data[0].keys())    # Get headers from the first device data
-    sheet.append(headers)
+    # Write table headings
+    headings = list(data[0].keys())    # Get headings from the first device data
+    sheet.append(headings)
 
     # Write data
     for item in data:
         row = []
-        for header in headers:
-            row.append(item[header])
+        for heading in headings:
+            row.append(item[heading])
         sheet.append(row)
         
     logging.info(f"Data for {sheet_name} added to workbook")
@@ -275,7 +301,7 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format='[%(asctime)s - %(levelname)s] %(message)s')
     logging.info(f"Setting API rate limit: {api_rate_limit} calls in {api_rate_limit_period} seconds")
     
-    timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M')
+    timestamp = time.strftime('%Y-%m-%d_%H-%M')
 
     dnac_base_url      = 'https://172.26.123.10'
     output_filename    = f"dnac-report-{timestamp}.xlsx"
@@ -284,16 +310,19 @@ if __name__ == '__main__':
 
     wb = Workbook()
     wb.remove(wb.active)
+
+    auth_url = '/dna/system/api/v1/auth/token'
+    token_manager = TokenManager(dnac_base_url + auth_url, username, password) # Creating a class instance for the token manager
+    token_manager.start() # Starting a thread for automatic token refresh every 50 minutes
     
-    headers       = get_headers(username, password, dnac_base_url)
-    devices       = get_devices(dnac_base_url, headers)
+    devices       = get_devices(dnac_base_url)
     switches_data = [device for device in devices if device["family"] == "Switches and Hubs"] # Extract Switches data from devices
     wap_data      = [device for device in devices if device["family"] == "Unified AP"] # Extract WAPs data from devices
     
     wb = write_data_to_sheet_in_workbook(switches_data, "Switches", wb) # Add Switches data to workbook object
     wb = write_data_to_sheet_in_workbook(wap_data, "WAPs", wb) # Add WAPs data to workbook object
     
-    wb = get_and_write_all_switches_ports_data_to_workbook(dnac_base_url, switches_data, device_name_filter_string, headers, wb) # Add Ports data to workbook objects (stack per sheet)
+    wb = get_and_write_all_switches_ports_data_to_workbook(dnac_base_url, switches_data, device_name_filter_string, wb) # Add Ports data to workbook objects (stack per sheet)
 
     save_results(wb, output_filename)
 
