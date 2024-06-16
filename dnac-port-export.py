@@ -303,7 +303,7 @@ def save_results(workbook, filename):
 if __name__ == '__main__':
 
     logging.basicConfig(level=logging.INFO, format='[%(asctime)s - %(levelname)s] %(message)s')
-    logging.info(f"Setting API rate limit: {api_rate_limit} calls in {api_rate_limit_period} seconds")
+    logging.info(f"Setting API rate limit: {api_rate_limit} calls in {api_rate_limit_period/60} minutes")
     
     timestamp = time.strftime('%Y-%m-%d_%H-%M')
 
