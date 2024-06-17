@@ -27,7 +27,6 @@ class TokenManager:
 
     def request_token(self):
         try:
-            check_api_rate_limit()
             response = requests.post(self.token_url, auth=HTTPBasicAuth(username, password), verify=False)
             self.token = response.json()['Token']
             logging.info(f"Token received from DNAC")
@@ -108,7 +107,6 @@ def get_headers():
 
 def get_devices(base_url):
 
-    
     devices_url = '/dna/intent/api/v1/network-device'
 
     params = {}
@@ -116,6 +114,7 @@ def get_devices(base_url):
     headers = get_headers()
     check_api_rate_limit()
     response = requests.get(base_url + devices_url, headers=headers, params=params, verify=False)
+ 
     devices = []
     # Save the entire device data as a list of dictionaries
     for item in response.json()['response']:
@@ -304,7 +303,8 @@ if __name__ == '__main__':
 
     logging.basicConfig(level=logging.INFO, format='[%(asctime)s - %(levelname)s] %(message)s')
     logging.info(f"Setting API rate limit: {api_rate_limit} calls in {api_rate_limit_period/60} minutes")
-    
+    logging.info(f"The script will pause when the limit is reached")
+
     timestamp = time.strftime('%Y-%m-%d_%H-%M')
 
     dnac_base_url      = 'https://172.26.123.10'
