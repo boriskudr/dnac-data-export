@@ -111,8 +111,8 @@ def get_devices(base_url):
 
     params = {}
 
-    headers = get_headers()
     check_api_rate_limit()
+    headers = get_headers()
     response = requests.get(base_url + devices_url, headers=headers, params=params, verify=False)
  
     devices = []
@@ -135,8 +135,8 @@ def get_user_port_config(base_url, management_ip_address, interface_name):
 
     logging.info(f"Retrieving data for switch {management_ip_address} {interface_name}")
     
-    headers = get_headers()
     check_api_rate_limit()
+    headers = get_headers()
     response = requests.get(base_url + sda_port_assignment_url, headers=headers, params=port_info, verify=False)
     data = response.json()
 	
@@ -176,8 +176,8 @@ def get_wap_port_config(base_url, management_ip_address, interface_name):
 
     logging.info(f"Retrieving data for switch {management_ip_address} {interface_name} (WAP)")
     
-    headers = get_headers()
     check_api_rate_limit()
+    headers = get_headers()
     response = requests.get(base_url + sda_wap_port_assignment_url, headers=headers, params=port_info, verify=False)
     data = response.json()
     
@@ -305,10 +305,10 @@ if __name__ == '__main__':
     logging.info(f"Setting API rate limit: {api_rate_limit} calls in {api_rate_limit_period/60} minutes")
     logging.info(f"The script will pause when the limit is reached")
 
-    timestamp = time.strftime('%Y-%m-%d_%H-%M')
+    dnac_base_url = 'https://172.26.123.10'
 
-    dnac_base_url      = 'https://172.26.123.10'
-    output_filename    = f"dnac-report-{timestamp}.xlsx"
+    timestamp       = time.strftime('%Y-%m-%d_%H-%M')
+    output_filename = f"dnac-report-{timestamp}.xlsx"
     
     username, password, device_name_filter_string = set_variables_from_env_and_cli()    
 
