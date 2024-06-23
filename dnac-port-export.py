@@ -1,3 +1,5 @@
+# Release 1.0 - ports info queried one-by-one
+
 import threading
 import argparse
 import json
