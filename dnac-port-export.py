@@ -1,4 +1,4 @@
-# Release 2.0 - ports info queried in one API request per switch
+# Release 1.0 - ports info queried one-by-one
 
 import threading
 import json
@@ -78,11 +78,6 @@ def critical_api_error(device_hostname, device_id, response):
     logging.error(f"{response._content}")
     sys.exit()
 
-def dump_json_to_file(data, filename):
-    with open(filename, 'w') as file:
-        json.dump(data, file, indent=4)
-        logging.info(f"Saved data dump to {filename}")
-
 def check_system_variables(variables):
     missing_variables = []
     
@@ -157,12 +152,12 @@ def get_switch_device_info_data(user_api_session, base_url, device):
     Retrieves access port information for a switch in the provided data.
 
     Args:
-        user_api_session (object): GUI API session object
-        base_url (str): Base URL of DNA Center
         device (dict) : Dictionary containing one switch data from DNA Center.
+        base_url (str): Base URL of DNA Center.
+        managementIpAddress (str): IP address of a switch
 
     Returns:
-        list: List of dictionaries containing retrieved ports information.
+        list: List of dictionaries containing retrieved port information.
     """
     
     device_info_url = base_url + f"/api/v2/data/customer-facing-service/DeviceInfo?networkDeviceId={device['id']}"
@@ -174,10 +169,9 @@ def get_switch_device_info_data(user_api_session, base_url, device):
   
     try:
         data = response.json()['response'][0]['deviceInterfaceInfo']
-    except Exception as e:
-        logging.error(f"'response'][0]['deviceInterfaceInfo'] not found: {e}")
-        dump_json_to_file(response.json(), f"{device['hostname']}_get_switch_device_info_data-received.txt")
-        sys.exit()
+    except:
+        logging.info(f"{device['hostname']} is not an Edge Node")
+        return None
     
     if response.status_code == 200:
         return data
@@ -189,11 +183,12 @@ def get_switch_port_info_data(base_url, device):
     Retrieves access port information for a switch in the provided data.
 
     Args:
-        base_url (str): Base URL of DNA Center.
         device (dict) : Dictionary containing one switch data from DNA Center.
+        base_url (str): Base URL of DNA Center.
+        managementIpAddress (str): IP address of a switch
 
     Returns:
-        list: List of dictionaries containing retrieved ports information.
+        list: List of dictionaries containing retrieved port information.
     """
     device_port_url = f"/api/v1/interface/network-device/{device['id']}/"
 
@@ -210,21 +205,6 @@ def get_switch_port_info_data(base_url, device):
         critical_api_error(device['hostname'], device['id'], response)
 
 def merge_device_and_interface_data(switch_device_info_data, switch_port_info_data):
-    """
-    Merges device and interface data from switch_device_info_data and switch_port_info_data.
-
-    Args:
-        switch_device_info_data (list): A list of dictionaries containing switch device information.
-        switch_port_info_data (list): A list of dictionaries containing switch port information.
-
-    Returns:
-        list: A list of merged dictionaries containing combined data from both inputs. Keys from switch_device_info_data
-              include 'interfaceName', 'description', 'connectedDeviceType', 'role', and expanded 'authenticationProfile' 
-              fields prefixed with 'dot1x_'. Keys from switch_port_info_data include 'vlanId', 'voiceVlan', 'nativeVlanId',
-              'description', 'adminStatus', 'status', 'speed', 'duplex', 'portMode', and 'ipv4Address'. The 'speed' field 
-              is mapped to a human-readable format.
-    """
-
     switch_device_info_data_keys_to_copy = [
         "interfaceName",
         "description",
@@ -284,7 +264,6 @@ def merge_device_and_interface_data(switch_device_info_data, switch_port_info_da
             if 'speed' in combined_item and combined_item['speed'] in speed_mapping:
                 combined_item['speed'] = speed_mapping[combined_item['speed']]
 
-            # Expand nested dot1x dictionary into keys with prefix
             if switch_device_info_data_nested_key in item1:
                 nested_dict = item1[switch_device_info_data_nested_key]
                 combined_item.update({switch_device_info_data_nested_keys_new_key_prefix + key: nested_dict[key] for key in switch_device_info_data_nested_keys_to_copy if key in nested_dict})
@@ -293,20 +272,22 @@ def merge_device_and_interface_data(switch_device_info_data, switch_port_info_da
 
     return data
 
+def dump_json_to_file(data, filename):
+    with open(filename, 'w') as file:
+        json.dump(data, file, indent=4)
+        logging.info(f"Saved data dump to {filename}")
+        
 def get_and_write_all_switches_ports_data_to_workbook(base_url, user_api_session, switches_data, device_name_filter_string, workbook):
     """
     Retrieves access port information for switches in the provided data and adds each switch's port info into a separate sheet in workbook.
 
     Args:
-        base_url (str): Base URL of DNA Center.
-        user_api_session (object): GUI API session object
         switches_data (dict): Dictionary containing all switches data from DNA Center.
-        device_name_filter_string (string): Only devices with names that include filter string will be queried
-        workbook (object): workbook object
+        base_url (str): Base URL of DNA Center.
+        workbook (workbook): workbook object
 
     Returns:
-        workbook: Updated workbook object with each switch's port info in a separate sheet. 
-                  Only switches with assigned user ports are included.
+        workbook: Updated workbook object with each switch's port info in a separate sheet. Only switches with assigned ports are included
     """
 
     switch_device_info_data = []
@@ -398,7 +379,7 @@ def save_results(workbook, filename):
     
 if __name__ == '__main__':
 
-    logging.basicConfig(level=logging.DEBUG, format='[%(asctime)s - %(levelname)s] %(message)s')
+    logging.basicConfig(level=logging.INFO, format='[%(asctime)s - %(levelname)s] %(message)s')
     logging.info(f"Setting API rate limit: {api_rate_limit} calls in {api_rate_limit_period/60} minutes")
     logging.info(f"The script will pause when the limit is reached")
 
