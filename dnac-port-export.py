@@ -1,4 +1,7 @@
-# Release 2.0 - ports info queried in one API request per switch
+# Release 2.1 - ports info queried in one API request per switch
+
+# TODO: Some switchs do not have extended dot1x data in report (for example SVPHF-71-L3-E3A-EN01)
+
 
 import threading
 import json
@@ -89,13 +92,13 @@ def check_system_variables(variables):
 
 def set_variables_from_env_and_cli():
     run_options: ArgumentParser = argparse.ArgumentParser()
-    run_options.add_argument('-device-filter', default='', dest='device_name_filter_string', required=False, help="Limit port query to device names that include the filter string, the default is not set")
-    run_options.add_argument('-dump', default=False, dest='dump_dictionary', required=False, help="Set to True to dump device and interface dictionaries into txt files, the default is not set")
+    run_options.add_argument('-filter-string', default='', dest='device_name_filter_string', required=False, help="Limit port query to device names that include the filter string, the default is not set")
+    run_options.add_argument('-dump', action='store_true', dest='dump', required=False, help="Set to dump device and interface dictionaries into txt files, the default is not set")
 
     device_name_filter_string = run_options.parse_args().device_name_filter_string
     logging.info(f"Using device name filter string {device_name_filter_string}")
     
-    dump_dictionary = run_options.parse_args().dump_dictionary
+    dump_dictionary = run_options.parse_args().dump
     logging.info(f"Dumping device and interface dictionaries into txt files")
     
     device_credential_vars = ['DNAC_SCRIPT_USERNAME', 'DNAC_SCRIPT_PASSWORD']
@@ -281,7 +284,9 @@ def merge_device_and_interface_data(switch_device_info_data, switch_port_info_da
             if switch_device_info_data_nested_key in item1:
                 nested_dict = item1[switch_device_info_data_nested_key]
                 combined_item.update({switch_device_info_data_nested_keys_new_key_prefix + key: nested_dict[key] for key in switch_device_info_data_nested_keys_to_copy if key in nested_dict})
-
+            else:
+                combined_item['dot1x_name'] = "*Site default profile*"
+                
             data.append(combined_item)
 
     return data
@@ -364,7 +369,13 @@ def write_data_to_sheet_in_workbook(data, sheet_name, workbook):
         if len(parts) <= 1:
             return value, 0, 0
 
-        # Convert second and third parts to integers (handle potential errors)
+        # If one "/", return the fist part, seond value as integer and a zero
+        if len(parts) <= 2:
+            int_part2 = int(parts[1]) # Convert second part to integer
+            # Sort based on interface and second part (number)
+            return parts[0], int_part2, 0
+        
+        # Convert second and third parts to integers
         int_part2 = int(parts[1])
         int_part3 = int(parts[2])
  
@@ -381,7 +392,7 @@ def write_data_to_sheet_in_workbook(data, sheet_name, workbook):
             row.append(item.get(heading, "N/A"))
         sheet.append(row)
 
-    logging.info(f"Data saved to workbook sheet '{sheet_name}'")
+    logging.info(f"+++Data saved to workbook sheet '{sheet_name}'")
 
     return workbook
 
@@ -389,7 +400,7 @@ def save_results(workbook, filename):
   
     try:
         workbook.save(filename)
-        logging.info(f"Data written successfully to '{filename}'")
+        logging.info(f"+++Data written successfully to '{filename}'")
     except Exception as e:
         logging.error(f"Error writing to Excel file: {e}")
         sys.exit()
