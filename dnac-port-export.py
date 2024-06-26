@@ -1,4 +1,4 @@
-# Release 1.0 - ports info queried one-by-one
+# Release 2.0 - ports info queried in one API request per switch
 
 import threading
 import json
@@ -152,12 +152,12 @@ def get_switch_device_info_data(user_api_session, base_url, device):
     Retrieves access port information for a switch in the provided data.
 
     Args:
+        user_api_session (object): GUI API session object
+        base_url (str): Base URL of DNA Center
         device (dict) : Dictionary containing one switch data from DNA Center.
-        base_url (str): Base URL of DNA Center.
-        managementIpAddress (str): IP address of a switch
 
     Returns:
-        list: List of dictionaries containing retrieved port information.
+        list: List of dictionaries containing retrieved ports information.
     """
     
     device_info_url = base_url + f"/api/v2/data/customer-facing-service/DeviceInfo?networkDeviceId={device['id']}"
@@ -183,12 +183,11 @@ def get_switch_port_info_data(base_url, device):
     Retrieves access port information for a switch in the provided data.
 
     Args:
-        device (dict) : Dictionary containing one switch data from DNA Center.
         base_url (str): Base URL of DNA Center.
-        managementIpAddress (str): IP address of a switch
+        device (dict) : Dictionary containing one switch data from DNA Center.
 
     Returns:
-        list: List of dictionaries containing retrieved port information.
+        list: List of dictionaries containing retrieved ports information.
     """
     device_port_url = f"/api/v1/interface/network-device/{device['id']}/"
 
@@ -205,6 +204,20 @@ def get_switch_port_info_data(base_url, device):
         critical_api_error(device['hostname'], device['id'], response)
 
 def merge_device_and_interface_data(switch_device_info_data, switch_port_info_data):
+    """
+    Merges device and interface data from switch_device_info_data and switch_port_info_data.
+
+    Args:
+        switch_device_info_data (list): A list of dictionaries containing switch device information.
+        switch_port_info_data (list): A list of dictionaries containing switch port information.
+
+    Returns:
+        list: A list of merged dictionaries containing combined data from both inputs. Keys from switch_device_info_data
+              include 'interfaceName', 'description', 'connectedDeviceType', 'role', and expanded 'authenticationProfile' 
+              fields prefixed with 'dot1x_'. Keys from switch_port_info_data include 'vlanId', 'voiceVlan', 'nativeVlanId',
+              'description', 'adminStatus', 'status', 'speed', 'duplex', 'portMode', and 'ipv4Address'. The 'speed' field 
+              is mapped to a human-readable format.
+    """
     switch_device_info_data_keys_to_copy = [
         "interfaceName",
         "description",
@@ -264,6 +277,7 @@ def merge_device_and_interface_data(switch_device_info_data, switch_port_info_da
             if 'speed' in combined_item and combined_item['speed'] in speed_mapping:
                 combined_item['speed'] = speed_mapping[combined_item['speed']]
 
+			# Expand nested dot1x dictionary into keys with prefix
             if switch_device_info_data_nested_key in item1:
                 nested_dict = item1[switch_device_info_data_nested_key]
                 combined_item.update({switch_device_info_data_nested_keys_new_key_prefix + key: nested_dict[key] for key in switch_device_info_data_nested_keys_to_copy if key in nested_dict})
@@ -282,12 +296,15 @@ def get_and_write_all_switches_ports_data_to_workbook(base_url, user_api_session
     Retrieves access port information for switches in the provided data and adds each switch's port info into a separate sheet in workbook.
 
     Args:
-        switches_data (dict): Dictionary containing all switches data from DNA Center.
         base_url (str): Base URL of DNA Center.
-        workbook (workbook): workbook object
+        user_api_session (object): GUI API session object
+        switches_data (dict): Dictionary containing all switches data from DNA Center.
+        device_name_filter_string (string): Only devices with names that include filter string will be queried
+        workbook (object): workbook object
 
     Returns:
-        workbook: Updated workbook object with each switch's port info in a separate sheet. Only switches with assigned ports are included
+        workbook: Updated workbook object with each switch's port info in a separate sheet. 
+                  Only switches with assigned user ports are included.
     """
 
     switch_device_info_data = []
@@ -322,51 +339,51 @@ def get_and_write_all_switches_ports_data_to_workbook(base_url, user_api_session
     return workbook
 
 def write_data_to_sheet_in_workbook(data, sheet_name, workbook):
-  if not data:
-    logging.warning("Data is empty. No sheet created.")
-    return workbook
+    if not data:
+        logging.warning("Data is empty. No sheet created.")
+        return workbook
 
-  sheet = workbook.create_sheet(title=sheet_name)
+    sheet = workbook.create_sheet(title=sheet_name)
 
-  # Find the dictionary with maximum number of keys
-  max_keys_dict = max(data, key=lambda item: len(item.keys()))
+    # Find the dictionary with maximum number of keys
+    max_keys_dict = max(data, key=lambda item: len(item.keys()))
 
-  # Use keys from max_keys_dict to create headings
-  headings = list(max_keys_dict.keys())
+    # Use keys from max_keys_dict to create headings
+    headings = list(max_keys_dict.keys())
 
-  # Write table headings
-  sheet.append(headings)
+    # Write table headings
+    sheet.append(headings)
 
-  # Sorting function for switch interface in value
-  def sort_key(item):
-    value = item.get(headings[0], "")
-    # Split by "/" but keep the original value for full comparison
-    parts = value.split("/")
+    # Sorting function for switch interface in value
+    def sort_key(item):
+        value = item.get(headings[0], "")
+        # Split by "/" but keep the original value for full comparison
+        parts = value.split("/")
 
-    # If no "/" or single element, return the original value and two zeros
-    if len(parts) <= 1:
-      return value, 0, 0
+        # If no "/" or single element, return the original value and two zeros
+        if len(parts) <= 1:
+            return value, 0, 0
 
-    # Convert second and third parts to integers (handle potential errors)
-    int_part2 = int(parts[1])
-    int_part3 = int(parts[2])
+        # Convert second and third parts to integers (handle potential errors)
+        int_part2 = int(parts[1])
+        int_part3 = int(parts[2])
  
-    # Sort based on interface, second part (number), then third part (number)
-    return (parts[0], int_part2, int_part3)
+        # Sort based on interface, second part (number), then third part (number)
+        return (parts[0], int_part2, int_part3)
 
-  # Sort data using the custom sort function
-  sorted_data = sorted(data, key=sort_key)
+    # Sort data using the custom sort function
+    sorted_data = sorted(data, key=sort_key)
 
-  # Write sorted data
-  for item in sorted_data:
-    row = []
-    for heading in headings:
-      row.append(item.get(heading, "N/A"))
-    sheet.append(row)
+    # Write sorted data
+    for item in sorted_data:
+        row = []
+        for heading in headings:
+            row.append(item.get(heading, "N/A"))
+        sheet.append(row)
 
-  logging.info(f"Data saved to workbook sheet '{sheet_name}'")
+    logging.info(f"Data saved to workbook sheet '{sheet_name}'")
 
-  return workbook
+    return workbook
 
 def save_results(workbook, filename):
   
