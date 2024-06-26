@@ -1,6 +1,7 @@
 # Release 2.1 - ports info queried in one API request per switch
 
 # TODO: Some switchs do not have extended dot1x data in report (for example SVPHF-71-L3-E3A-EN01)
+# TODO: Write actual site default template into dot1x_name column
 
 
 import threading
