@@ -364,7 +364,13 @@ def write_data_to_sheet_in_workbook(data, sheet_name, workbook):
         if len(parts) <= 1:
             return value, 0, 0
 
-        # Convert second and third parts to integers (handle potential errors)
+        # If one "/", return the fist part, seond value as integer and a zero
+        if len(parts) <= 2:
+            int_part2 = int(parts[1]) # Convert second part to integer
+            # Sort based on interface and second part (number)
+            return parts[0], int_part2, 0
+        
+        # Convert second and third parts to integers
         int_part2 = int(parts[1])
         int_part3 = int(parts[2])
  
@@ -381,7 +387,7 @@ def write_data_to_sheet_in_workbook(data, sheet_name, workbook):
             row.append(item.get(heading, "N/A"))
         sheet.append(row)
 
-    logging.info(f"Data saved to workbook sheet '{sheet_name}'")
+    logging.info(f"+++Data saved to workbook sheet '{sheet_name}'")
 
     return workbook
 
@@ -389,7 +395,7 @@ def save_results(workbook, filename):
   
     try:
         workbook.save(filename)
-        logging.info(f"Data written successfully to '{filename}'")
+        logging.info(f"+++Data written successfully to '{filename}'")
     except Exception as e:
         logging.error(f"Error writing to Excel file: {e}")
         sys.exit()
