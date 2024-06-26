@@ -1,4 +1,4 @@
-# Release 1.0 - ports info queried one-by-one
+# Release 2.0 - ports info queried in one API request per switch
 
 import threading
 import json
